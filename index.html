@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 감정 분석기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+        .gradient-text {
+            background: linear-gradient(to right, #4f46e5, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        #result-box {
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-2xl mx-auto bg-gray-800 rounded-2xl shadow-2xl p-6 md:p-8">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold gradient-text">AI 감정 분석기</h1>
+            <p class="text-gray-400 mt-2">사진 속 인물의 감정을 AI가 분석해 드립니다.</p>
+        </header>
+
+        <main id="main-content">
+            <!-- 초기 선택 화면 -->
+            <div id="initial-choice" class="flex flex-col sm:flex-row gap-4">
+                <button id="use-webcam-btn" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-transform transform hover:scale-105">
+                    📸 웹캠으로 사진 찍기
+                </button>
+                <label for="file-upload" class="flex-1 bg-pink-600 hover:bg-pink-700 text-white font-bold py-3 px-4 rounded-lg cursor-pointer transition-transform transform hover:scale-105 text-center">
+                    🖼️ 이미지 업로드하기
+                </label>
+                <input type="file" id="file-upload" class="hidden" accept="image/*">
+            </div>
+
+            <!-- 웹캠 화면 -->
+            <div id="webcam-container" class="hidden flex-col items-center gap-4">
+                <div class="w-full bg-black rounded-lg overflow-hidden aspect-video">
+                    <video id="video" autoplay playsinline class="w-full h-full object-cover"></video>
+                </div>
+                <button id="capture-btn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform transform hover:scale-105">
+                    촬영하기
+                </button>
+            </div>
+            
+            <!-- 결과 표시 화면 -->
+            <div id="result-container" class="hidden flex flex-col items-center gap-4">
+                <div class="w-full max-w-md relative">
+                    <img id="captured-image" class="rounded-lg shadow-lg w-full" alt="분석할 이미지">
+                    <div id="loader" class="hidden absolute inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center rounded-lg">
+                        <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-indigo-400"></div>
+                        <p class="mt-4 text-lg font-semibold">감정을 분석하고 있습니다...</p>
+                    </div>
+                </div>
+                <div id="result-box" class="w-full bg-gray-700 p-4 rounded-lg min-h-[100px] text-gray-300"></div>
+                <button id="reset-btn" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-transform transform hover:scale-105">
+                    다시하기
+                </button>
+            </div>
+        </main>
+    </div>
+    <canvas id="canvas" class="hidden"></canvas>
+
+    <script>
+        // DOM 요소 가져오기
+        const initialChoice = document.getElementById('initial-choice');
+        const useWebcamBtn = document.getElementById('use-webcam-btn');
+        const fileUpload = document.getElementById('file-upload');
+        
+        const webcamContainer = document.getElementById('webcam-container');
+        const video = document.getElementById('video');
+        const captureBtn = document.getElementById('capture-btn');
+        const canvas = document.getElementById('canvas');
+
+        const resultContainer = document.getElementById('result-container');
+        const capturedImage = document.getElementById('captured-image');
+        const loader = document.getElementById('loader');
+        const resultBox = document.getElementById('result-box');
+        const resetBtn = document.getElementById('reset-btn');
+
+        let stream;
+
+        // 웹캠 사용 버튼 클릭 이벤트
+        useWebcamBtn.addEventListener('click', async () => {
+            initialChoice.classList.add('hidden');
+            webcamContainer.classList.remove('hidden');
+            webcamContainer.classList.add('flex');
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error("웹캠 접근 오류:", err);
+                resultBox.textContent = "웹캠에 접근할 수 없습니다. 브라우저 설정을 확인해주세요.";
+                resetToInitial();
+            }
+        });
+
+        // 파일 업로드 이벤트
+        fileUpload.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    capturedImage.src = e.target.result;
+                    showResultView();
+                    analyzeEmotion(e.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 사진 촬영 버튼 클릭 이벤트
+        captureBtn.addEventListener('click', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/png');
+            
+            capturedImage.src = dataUrl;
+            stopWebcam();
+            showResultView();
+            analyzeEmotion(dataUrl);
+        });
+
+        // 다시하기 버튼 클릭 이벤트
+        resetBtn.addEventListener('click', resetToInitial);
+
+        // 결과 화면 표시
+        function showResultView() {
+            initialChoice.classList.add('hidden');
+            webcamContainer.classList.add('hidden');
+            webcamContainer.classList.remove('flex');
+            resultContainer.classList.remove('hidden');
+            resultContainer.classList.add('flex');
+        }
+
+        // 초기 화면으로 리셋
+        function resetToInitial() {
+            stopWebcam();
+            initialChoice.classList.remove('hidden');
+            webcamContainer.classList.add('hidden');
+            webcamContainer.classList.remove('flex');
+            resultContainer.classList.add('hidden');
+            resultContainer.classList.remove('flex');
+            capturedImage.src = '';
+            resultBox.textContent = '';
+            fileUpload.value = ''; // 파일 입력 초기화
+        }
+
+        // 웹캠 스트림 중지
+        function stopWebcam() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        // Gemini API를 이용한 감정 분석 함수
+        async function analyzeEmotion(base64ImageData) {
+            loader.classList.remove('hidden');
+            resultBox.textContent = '';
+
+            const pureBase64 = base64ImageData.split(',')[1];
+            const prompt = "이 이미지에 있는 사람(들)의 감정을 분석해줘. 만약 얼굴이 여러 개 있다면 각각의 감정을 알려줘. 감정은 '기쁨', '슬픔', '놀람', '화남', '평온함' 등 명확한 단어로 표현해줘. 분석 결과를 친절한 말투로 요약해서 설명해줘.";
+
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        { inlineData: { mimeType: "image/png", data: pureBase64 } }
+                    ]
+                }],
+            };
+            
+            const apiKey = ""; // API 키가 필요 없는 환경
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API 요청 실패: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    resultBox.textContent = text;
+                } else {
+                    resultBox.textContent = "감정 분석 결과를 가져올 수 없습니다. 이미지에 얼굴이 명확하게 보이는지 확인 후 다시 시도해주세요.";
+                }
+            } catch (error) {
+                console.error("감정 분석 중 오류 발생:", error);
+                resultBox.textContent = "오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+            } finally {
+                loader.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
